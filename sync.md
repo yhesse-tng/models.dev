@@ -467,6 +467,24 @@ engy is implemented in `packages/core/src/sync/providers/engy.ts`.
 - Per-token USD string prices become per-1M, rounded to six decimals; two would carry float error otherwise.
 - Modalities are sorted into catalogue order; wire order is arbitrary.
 
+## TrustedTokens Notes
+
+TrustedTokens is implemented in `packages/core/src/sync/providers/trustedtokens.ts`.
+
+- Run it with `bun models:sync trustedtokens` or `bun trustedtokens:sync`.
+- Source endpoint: `https://api.trustedtokens.eu/v1/models`; required auth: `TRUSTEDTOKENS_API_KEY`. The catalog is account-scoped and returns the OpenRouter consumer schema plus a `reasoning` object.
+- The catalog's per-token prices are EUR. The sync converts them to USD/MTok at the ECB euro reference rate in `EUR_USD_RATE` (1.1150 on 2026-10-27) and records the EUR figures, rate, date and ECB URL in each file header. The catalog has no currency field; the website labels these numbers as EUR per 1M tokens, so do not publish them as USD.
+- Model IDs are namespaced by upstream lab (`Qwen/...`, `zai-org/...`, `deepseek-ai/...`); the sync maps those to `alibaba`, `zhipuai` and `deepseek` and strips quantization/vendor markers before resolving `base_model`.
+- Served context is the lower of the catalog value and the lab entry, so a larger upstream claim (for example 1,048,576 for a 1M model) never overstates the model. Output limits are not published and stay inherited from the lab.
+- Reasoning effort values come from `reasoning.supported_efforts`, sorted low to high, with measured relay overrides: DeepSeek V4.1 adds `none`; Qwen3.6, Gemma 4 and Nemotron use the Kilo peer's `none`/`high` pair (medium is accepted but identical to high); DiffusionGemma uses the NVIDIA peer's full `none`…`max` ladder (all accepted; only `none` is off). No toggle or budget is invented; `reasoning.enabled`, `thinking.type` and `chat_template_kwargs.enable_thinking` are accepted but do not turn reasoning off. Every entry writes `[api.chat-completions] compatibility = { reasoning_field = "reasoning_content" }`, the measured side channel (the response also exposes `reasoning` and `reasoning_details`).
+- The catalog's `none` is not an off state everywhere. Measured 2026-10-28: it is off for Qwen, Gemma, Nemotron, DeepSeek and GLM-5.2, but GPT-OSS, GLM-5.3 and GLM-5.3-Flash still reason with `none`, so no off level is published for them. The measured `reasoning_content` lengths are in each file's header.
+- `tools` and `structured_output` come from `supported_parameters`, with one measured override: DiffusionGemma rejects `response_format` with 422, so `structured_output = false`. DiffusionGemma also rejects `temperature`, so `temperature = false`; every other row accepts it.
+- Image input is inherited from the lab's image MIME list, minus video and PDF, which return 422 on this host. The precise list is written through `v2Set`; v1 keeps the generic categories.
+- Cached input is priced for every row, and repeated prompts report `cached_tokens`, so new entries get `cache = { implicit = true }`; an authored cache kind is kept.
+- New models are created as `base_model` overlays when a lab entry resolves. Unresolved ids open the standard `[missing-model]` issue; `provider/lab/model` route variants are reported and skipped.
+- TNG's own `tngtech/DeepSeek-TNG-R1T2-Chimera` is intentionally ignored until a `models/tngtech/` lab entry is authored; the run prints a notice instead of opening an issue.
+- A response with fewer than five models is treated as truncated and fails the run.
+
 ## Standalone Generators
 
 Some provider scripts in `packages/core/script/generate-*.ts` are not wired into `bun models:sync`. When updating those scripts, preserve existing `base_model` and `base_model_omit` fields for generated TOMLs that already use model metadata inheritance. New inheritance-aware output should use `base_model`; do not reintroduce legacy `[extends]` syntax.
